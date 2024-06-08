@@ -9,6 +9,7 @@ import click
 import requests
 from dotenv import load_dotenv
 from openai import OpenAI
+from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
 
 from newsflash.constants import (
     IGNORE_ABSTRACTS,
@@ -25,7 +26,6 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-client = OpenAI(api_key=os.getenv("OPEN_API_KEY"))
 SupportedModels = Literal["gpt-4-turbo", "gpt-3.5-turbo"]
 MAX_TOKENS = 50
 MAX_CHARS = 120
@@ -36,7 +36,6 @@ NEWS_API_SOURCES = ["bbc-news", "bbc-sport"]
 JSONType = dict[str, str | int | float | bool | None | dict[str, Any] | list[Any]]
 
 
-# News API URL for top BBC news stories of the last week
 def fetch_articles(
     page: int, from_date: datetime.date, to_date: datetime.date
 ) -> JSONType:
@@ -46,7 +45,6 @@ def fetch_articles(
         f"&sortBy=popularity&apiKey={NEWS_API_KEY}&pageSize=100&page={page}"
     )
 
-    # Fetch the news data
     logging.info(f"Sending request: {url}")
     response = requests.get(url)
     news_data = cast(JSONType, response.json())
@@ -59,7 +57,6 @@ def get_current_date() -> datetime.date:
 
 
 def save_articles(run_date: datetime.date, lookback: int, max_pages: int = 1) -> str:
-    # Current date and one week ago date
     start_date = run_date - datetime.timedelta(days=lookback)
     all_articles: list[JSONType] = []
     current_date = start_date
@@ -118,6 +115,7 @@ def save_articles(run_date: datetime.date, lookback: int, max_pages: int = 1) ->
 
 
 def generate_quiplash_prompt(
+    client: OpenAI,
     headline: str,
     abstract: str,
     model: SupportedModels,
@@ -135,7 +133,7 @@ def generate_quiplash_prompt(
         logger.info(f"Not sending prompt, dry mode!\n{gpt_prompt}")
         return '"Testing prompts..."'
 
-    messages = [
+    messages: list[ChatCompletionMessageParam] = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": gpt_prompt},
     ]
@@ -154,20 +152,20 @@ def process_articles(
     is_wet: bool = False,
     thriplash_pct: float = 0.1,
 ) -> None:
-    # Load your dictionary with headlines and abstracts
     with open(file_name, "r") as file:
         headlines_and_abstracts = json.load(file)
 
     # Figure out how many thriplash prompts we will ame
     thriplash_threshold = (1 - thriplash_pct) * len(headlines_and_abstracts)
 
-    # Generate prompts for each abstract
-    quiplash_prompts: list[dict[str, str]] = []
+    quiplash_prompts: list[JSONType] = []
     for i, (headline, abstract) in enumerate(headlines_and_abstracts.items()):
         is_thriplash = i > thriplash_threshold
         logger.info(f"Sending: {headline}")
+
+        client = OpenAI(api_key=os.getenv("OPEN_API_KEY"))
         quiplash_prompt = generate_quiplash_prompt(
-            headline, abstract, model, is_wet=is_wet, is_thriplash=is_thriplash
+            client, headline, abstract, model, is_wet=is_wet, is_thriplash=is_thriplash
         )
         if quiplash_prompt is None:
             logger.warning("Nothing returned from GPT!")
@@ -178,7 +176,7 @@ def process_articles(
                 "headline": headline,
                 "abstract": abstract,
                 "quiplash_prompt": quiplash_prompt.strip("\"'"),
-                "is_thriplash": is_thriplash,
+                "is_thriplash": str(is_thriplash),
             }
         )
 
@@ -193,7 +191,8 @@ def process_articles(
                 if quiplash_prompt["is_thriplash"]:
                     file.write("=== THRIPLASHES ===\n\n")
                     in_thriplash_section = True
-            prompt = quiplash_prompt["quiplash_prompt"]
+
+            prompt = cast(str, quiplash_prompt["quiplash_prompt"])
             if len(prompt) > MAX_CHARS:
                 logging.warning("Skipping long prompt: {prompt}")
                 continue
