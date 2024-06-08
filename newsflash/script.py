@@ -122,7 +122,7 @@ def generate_quiplash_prompt(
     if not is_wet:
         logger.info("Not sending prompt, dry mode!")
         logger.debug(gpt_prompt)
-        return None
+        return '"Testing prompts..."'
 
     response = client.chat.completions.create(
         model=model,
@@ -147,15 +147,14 @@ def process_articles(
             headline, abstract, model, is_wet=is_wet
         )
         if quiplash_prompt is None:
-            if is_wet:
-                logger.warning("Nothing returned from GPT!")
+            logger.warning("Nothing returned from GPT!")
             continue
 
         quiplash_prompts.append(
             {
                 "headline": headline,
                 "abstract": abstract,
-                "quiplash_prompt": quiplash_prompt,
+                "quiplash_prompt": quiplash_prompt.strip("\"'"),
             }
         )
 
