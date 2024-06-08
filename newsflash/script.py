@@ -1,14 +1,15 @@
-from collections import Counter
 import datetime
 import json
-import os
 import logging
+import os
+from collections import Counter
 from typing import Any, Literal, cast
 
 import click
 import requests
 from dotenv import load_dotenv
 from openai import OpenAI
+
 from newsflash.constants import IGNORE_ABSTRACTS
 
 logging.basicConfig(
@@ -40,7 +41,7 @@ def fetch_articles(
     )
 
     # Fetch the news data
-
+    logging.info(f"Sending request: {url}")
     response = requests.get(url)
     news_data = cast(JSONType, response.json())
     return news_data
@@ -51,21 +52,24 @@ def get_current_date() -> datetime.date:
     return current_date
 
 
-def save_articles(run_date: datetime.date, max_pages: int = 1) -> str:
+def save_articles(run_date: datetime.date, lookback: int, max_pages: int = 1) -> str:
     # Current date and one week ago date
-    last_week_date = run_date - datetime.timedelta(days=7)
+    start_date = run_date - datetime.timedelta(days=lookback)
     all_articles: list[JSONType] = []
-    page = 1
-    total_results = 1
+    current_date = start_date
+    while current_date <= run_date:
+        logger.info(f"Collecting articles for {current_date}")
+        page = 1
+        total_results = 1
+        while (page - 1) * 100 < total_results and page <= max_pages:
+            news_data = fetch_articles(page, current_date, current_date)
+            total_results = cast(int, news_data["totalResults"])
+            articles = cast(list[JSONType], news_data["articles"])
+            all_articles.extend(articles)
+            page += 1
+        current_date += datetime.timedelta(days=1)
 
-    # Fetch articles while handling pagination
-    while (page - 1) * 100 < total_results and page <= max_pages:
-        news_data = fetch_articles(page, last_week_date, run_date)
-        total_results = cast(int, news_data["totalResults"])
-        articles = cast(list[JSONType], news_data["articles"])
-        all_articles.extend(articles)
-        page += 1
-
+    logger.info(f"Finished requesting articles, got {len(all_articles)}!")
     headlines_and_abstracts = {}
     seen_abstracts: set[str] = set()
 
@@ -173,17 +177,19 @@ def process_articles(
     default="gpt-3.5-turbo",
     required=True,
 )
+@click.option("--lookback", "-l", type=int, default=7)
 def main(
     wet: bool,
     input_date: datetime.datetime | None,
     model: SupportedModels,
+    lookback: int,
 ) -> None:
     if input_date is None:
-        run_date = get_current_date()
+        run_date = get_current_date() - datetime.timedelta(days=1)
     else:
         run_date = input_date.date()
 
-    articles_file = save_articles(run_date)
+    articles_file = save_articles(run_date, lookback=lookback)
     process_articles(articles_file, model, is_wet=wet)
 
 
